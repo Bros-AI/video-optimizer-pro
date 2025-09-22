@@ -1,383 +1,347 @@
-class MediaConverter {
+class HTML5VideoConverter {
     constructor() {
-        this.ffmpeg = null;
-        this.isLoaded = false;
-        this.currentFile = null;
-        this.initializeElements();
-        this.attachEventListeners();
-        this.loadFFmpeg();
+        this.state = {
+            files: [], // { id, file, original, status, processed }
+            isProcessing: false,
+            aspectRatio: 1,
+        };
+
+        this.elements = this.initializeElements();
+        this.initializeEventListeners();
     }
 
     initializeElements() {
-        this.fileInput = document.getElementById('fileInput');
-        this.conversionOptions = document.getElementById('conversionOptions');
-        this.convertBtn = document.getElementById('convertBtn');
-        this.progressSection = document.getElementById('progressSection');
-        this.progressFill = document.getElementById('progressFill');
-        this.progressText = document.getElementById('progressText');
-        this.outputSection = document.getElementById('outputSection');
-        this.downloadLink = document.getElementById('downloadLink');
-    }
-
-    async loadFFmpeg() {
-        try {
-            console.log('Loading FFmpeg with local compatibility mode...');
-            
-            // Create script element to load FFmpeg UMD version (works better locally)
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';
-            script.crossOrigin = 'anonymous';
-            
-            // Wait for script to load
-            await new Promise((resolve, reject) => {
-                script.onload = resolve;
-                script.onerror = reject;
-                document.head.appendChild(script);
-            });
-
-            // Check if FFmpeg is available
-            if (typeof createFFmpeg === 'undefined') {
-                throw new Error('FFmpeg failed to load - createFFmpeg not found');
-            }
-
-            console.log('FFmpeg script loaded, initializing...');
-
-            // Create FFmpeg instance with local-friendly configuration
-            this.ffmpeg = createFFmpeg({
-                log: true,
-                // Use jsdelivr for core files (better CORS support)
-                corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
-                // Disable workers to avoid CORS issues
-                mainName: 'main',
-            });
-
-            // Set up progress tracking
-            this.ffmpeg.setProgress(({ ratio }) => {
-                if (ratio > 0 && ratio <= 1) {
-                    const progress = Math.round(ratio * 100);
-                    this.showProgress(progress);
-                }
-            });
-
-            // Load FFmpeg core
-            console.log('Loading FFmpeg core...');
-            await this.ffmpeg.load();
-            
-            this.isLoaded = true;
-            console.log('✅ FFmpeg loaded successfully!');
-            
-            // Show success message
-            this.showSuccessMessage('FFmpeg loaded and ready to use!');
-
-        } catch (error) {
-            console.error('❌ Error loading FFmpeg:', error);
-            this.handleFFmpegLoadError(error);
-        }
-    }
-
-    handleFFmpegLoadError(error) {
-        let errorMessage = 'Failed to load FFmpeg. ';
-        let solutions = [];
-
-        if (error.message.includes('Worker') || error.message.includes('CORS')) {
-            errorMessage += 'This appears to be a CORS/Worker issue.';
-            solutions = [
-                '🌐 Upload files to a web server (GitHub Pages, Netlify, etc.)',
-                '🖥️ Run a local server (see instructions below)',
-                '🔄 Try a different browser (Chrome/Firefox work best)',
-                '🔒 Disable browser security temporarily (not recommended)'
-            ];
-        } else if (error.message.includes('fetch')) {
-            errorMessage += 'Network connection issue.';
-            solutions = [
-                '📡 Check your internet connection',
-                '🔄 Refresh the page and try again',
-                '🚫 Disable ad blockers temporarily',
-                '🔥 Try disabling browser extensions'
-            ];
-        } else {
-            errorMessage += error.message;
-            solutions = [
-                '🔄 Refresh the page',
-                '🌐 Try a different browser',
-                '📡 Check your internet connection'
-            ];
-        }
-
-        this.showError(errorMessage, solutions);
-        this.showLocalServerInstructions();
-    }
-
-    showLocalServerInstructions() {
-        const instructionsDiv = document.createElement('div');
-        instructionsDiv.className = 'server-instructions';
-        instructionsDiv.style.cssText = `
-            background: linear-gradient(135deg, #4834d4, #686de0);
-            color: white;
-            padding: 25px;
-            border-radius: 12px;
-            margin: 20px 0;
-            box-shadow: 0 10px 25px rgba(72, 52, 212, 0.3);
-            line-height: 1.6;
-        `;
-        
-        instructionsDiv.innerHTML = `
-            <h4 style="margin-bottom: 15px; color: #fff;">🖥️ How to Run Local Server:</h4>
-            <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; margin: 10px 0;">
-                <strong>Python:</strong><br>
-                <code style="color: #fffa65;">python -m http.server 8000</code><br>
-                Then open: <code style="color: #fffa65;">http://localhost:8000</code>
-            </div>
-            <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; margin: 10px 0;">
-                <strong>Node.js:</strong><br>
-                <code style="color: #fffa65;">npx serve .</code><br>
-                Or: <code style="color: #fffa65;">npx http-server</code>
-            </div>
-            <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; margin: 10px 0;">
-                <strong>PHP:</strong><br>
-                <code style="color: #fffa65;">php -S localhost:8000</code>
-            </div>
-        `;
-        
-        this.conversionOptions.appendChild(instructionsDiv);
-    }
-
-    showSuccessMessage(message) {
-        const successDiv = document.createElement('div');
-        successDiv.className = 'success-message';
-        successDiv.style.cssText = `
-            background: linear-gradient(135deg, #00b894, #00cec9);
-            color: white;
-            padding: 15px 20px;
-            border-radius: 12px;
-            margin: 15px 0;
-            box-shadow: 0 5px 15px rgba(0, 184, 148, 0.3);
-            font-weight: 500;
-            text-align: center;
-        `;
-        successDiv.textContent = message;
-        
-        this.conversionOptions.insertBefore(successDiv, this.conversionOptions.firstChild);
-        
-        // Auto-remove after 3 seconds
-        setTimeout(() => {
-            if (successDiv.parentNode) {
-                successDiv.remove();
-            }
-        }, 3000);
-    }
-
-    attachEventListeners() {
-        this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
-        this.convertBtn.addEventListener('click', () => this.convertFile());
-    }
-
-    handleFileSelect(event) {
-        const file = event.target.files[0];
-        if (file) {
-            this.currentFile = file;
-            this.conversionOptions.style.display = 'block';
-            console.log('📁 File selected:', file.name, file.type, `${(file.size / 1024 / 1024).toFixed(2)}MB`);
-        }
-    }
-
-    async convertFile() {
-        if (!this.isLoaded) {
-            this.showError('⏳ FFmpeg is still loading or failed to load. Please wait or refresh the page.');
-            return;
-        }
-
-        if (!this.currentFile) {
-            this.showError('📁 Please select a file first.');
-            return;
-        }
-
-        try {
-            this.showProgress(0);
-            this.setConvertButtonLoading(true);
-            this.outputSection.style.display = 'none';
-
-            // Get conversion parameters
-            const format = document.querySelector('input[name="format"]:checked').value;
-            const quality = document.getElementById('quality').value;
-
-            // Prepare file names
-            const inputFileName = `input.${this.getFileExtension(this.currentFile.name)}`;
-            const outputFileName = `output.${format}`;
-
-            console.log(`🔄 Converting ${inputFileName} to ${outputFileName} (${quality} quality)`);
-
-            // Load file into FFmpeg filesystem
-            console.log('📥 Loading file into FFmpeg...');
-            this.ffmpeg.FS('writeFile', inputFileName, await fetchFile(this.currentFile));
-            this.showProgress(20);
-
-            // Build and execute FFmpeg command
-            const command = this.buildFFmpegCommand(inputFileName, outputFileName, format, quality);
-            console.log('⚡ FFmpeg command:', command);
-
-            await this.ffmpeg.run(...command);
-            this.showProgress(80);
-
-            // Read the output file
-            console.log('📤 Reading converted file...');
-            const data = this.ffmpeg.FS('readFile', outputFileName);
-            this.showProgress(90);
-
-            // Create download link
-            const blob = new Blob([data.buffer], { 
-                type: this.getMimeType(format) 
-            });
-            const url = URL.createObjectURL(blob);
-
-            this.downloadLink.href = url;
-            this.downloadLink.download = `converted_${Date.now()}.${format}`;
-            this.downloadLink.style.display = 'inline-flex';
-            
-            this.outputSection.style.display = 'block';
-            this.showProgress(100);
-            
-            // Clean up FFmpeg filesystem
-            try {
-                this.ffmpeg.FS('unlink', inputFileName);
-                this.ffmpeg.FS('unlink', outputFileName);
-            } catch (cleanupError) {
-                console.warn('🧹 Cleanup warning:', cleanupError);
-            }
-
-            console.log('✅ Conversion completed successfully!');
-
-        } catch (error) {
-            console.error('❌ Conversion error:', error);
-            this.showError(`Conversion failed: ${error.message}`, [
-                '🔄 Try a different file format',
-                '📏 Check if file size is reasonable (under 100MB)',
-                '🎥 Ensure the input file is valid',
-                '🔄 Refresh and try again'
-            ]);
-        } finally {
-            this.setConvertButtonLoading(false);
-        }
-    }
-
-    buildFFmpegCommand(input, output, format, quality) {
-        const command = ['-i', input];
-
-        switch (format) {
-            case 'mp4':
-                command.push('-c:v', 'libx264', '-c:a', 'aac');
-                switch (quality) {
-                    case 'high': command.push('-crf', '18'); break;
-                    case 'medium': command.push('-crf', '23'); break;
-                    case 'low': command.push('-crf', '28'); break;
-                }
-                break;
-
-            case 'webm':
-                command.push('-c:v', 'libvpx-vp9', '-c:a', 'libopus');
-                switch (quality) {
-                    case 'high': command.push('-crf', '30'); break;
-                    case 'medium': command.push('-crf', '35'); break;
-                    case 'low': command.push('-crf', '40'); break;
-                }
-                break;
-
-            case 'mp3':
-                command.push('-vn', '-c:a', 'libmp3lame');
-                switch (quality) {
-                    case 'high': command.push('-b:a', '320k'); break;
-                    case 'medium': command.push('-b:a', '192k'); break;
-                    case 'low': command.push('-b:a', '128k'); break;
-                }
-                break;
-
-            case 'wav':
-                command.push('-vn', '-c:a', 'pcm_s16le');
-                break;
-        }
-
-        command.push(output);
-        return command;
-    }
-
-    getFileExtension(filename) {
-        const parts = filename.split('.');
-        return parts.length > 1 ? parts.pop().toLowerCase() : 'mp4';
-    }
-
-    getMimeType(format) {
-        const mimeTypes = {
-            'mp4': 'video/mp4',
-            'webm': 'video/webm',
-            'mp3': 'audio/mpeg',
-            'wav': 'audio/wav'
+        return {
+            uploadContainer: document.getElementById('upload-container'),
+            fileInput: document.getElementById('file-input'),
+            controlsSection: document.getElementById('controls-section'),
+            widthInput: document.getElementById('width-input'),
+            heightInput: document.getElementById('height-input'),
+            bitrateSelect: document.getElementById('bitrate-select'),
+            formatSelect: document.getElementById('format-select'),
+            removeAudio: document.getElementById('remove-audio'),
+            maintainAspectRatio: document.getElementById('maintain-aspect-ratio'),
+            processBtn: document.getElementById('process-btn'),
+            resetBtn: document.getElementById('reset-btn'),
+            videoQueueSection: document.getElementById('video-queue-section'),
+            videoGrid: document.getElementById('video-grid'),
+            videoCount: document.getElementById('video-count'),
+            errorMessage: document.getElementById('error-message'),
+            loadingOverlay: document.getElementById('loading-overlay'),
+            loadingText: document.getElementById('loading-text'),
         };
-        return mimeTypes[format] || 'application/octet-stream';
     }
 
-    showProgress(percentage) {
-        this.progressSection.style.display = 'block';
-        this.progressFill.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
-        this.progressText.textContent = `${Math.round(percentage)}%`;
+    initializeEventListeners() {
+        this.elements.fileInput.addEventListener('change', (e) => this.handleFileSelect(e.target.files));
+        this.setupDragAndDrop();
+        this.elements.widthInput.addEventListener('input', () => this.handleDimensionChange('width'));
+        this.elements.heightInput.addEventListener('input', () => this.handleDimensionChange('height'));
+        this.elements.processBtn.addEventListener('click', () => this.processAllVideos());
+        this.elements.resetBtn.addEventListener('click', () => this.resetApplication());
+        this.elements.videoGrid.addEventListener('click', (e) => {
+            const target = e.target.closest('button');
+            if (!target) return;
+            const card = target.closest('.video-card');
+            const fileId = card.dataset.id;
+            if (target.classList.contains('download-btn')) this.downloadSingleVideo(fileId);
+            if (target.classList.contains('remove-btn')) this.removeVideo(fileId);
+        });
     }
 
-    setConvertButtonLoading(loading) {
-        const btnText = this.convertBtn.querySelector('.btn-text');
-        const btnLoader = this.convertBtn.querySelector('.btn-loader');
-        
-        if (loading) {
-            btnText.style.display = 'none';
-            btnLoader.style.display = 'inline';
-            this.convertBtn.disabled = true;
+    setupDragAndDrop() {
+        const dropZone = this.elements.uploadContainer;
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => dropZone.addEventListener(eventName, e => { e.preventDefault(); e.stopPropagation(); }, false));
+        ['dragenter', 'dragover'].forEach(eventName => dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'), false));
+        ['dragleave', 'drop'].forEach(eventName => dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'), false));
+        dropZone.addEventListener('drop', (e) => this.handleFileSelect(e.dataTransfer.files), false);
+    }
+
+    async handleFileSelect(files) {
+        if (!files || files.length === 0) return;
+        this.showLoading(true, `Loading ${files.length} video(s)...`);
+        const filePromises = Array.from(files).map(file => this.processFile(file)).filter(p => p);
+        await Promise.all(filePromises);
+        this.renderVideoGrid();
+        this.updateUIState();
+        this.showLoading(false);
+    }
+
+    processFile(file) {
+        if (!file.type.match(/^video\/.+/i)) {
+            this.showError(`${file.name} is not a valid video file.`);
+            return null;
+        }
+        return new Promise(resolve => {
+            const video = document.createElement('video');
+            video.preload = 'metadata';
+            video.onloadedmetadata = async () => {
+                const thumbnailUrl = await this.generateThumbnail(video);
+                const fileObj = {
+                    id: `${file.name}-${file.size}-${Date.now()}`,
+                    file,
+                    original: { width: video.videoWidth, height: video.videoHeight, thumbnailUrl, size: file.size },
+                    status: 'pending',
+                    processed: null,
+                };
+                this.state.files.push(fileObj);
+                if (this.state.files.length === 1) this.setDefaultDimensions(video);
+                resolve();
+            };
+            video.onerror = () => { this.showError(`Could not read metadata for ${file.name}`); resolve(); };
+            video.src = URL.createObjectURL(file);
+        });
+    }
+
+    generateThumbnail(video) {
+        return new Promise(resolve => {
+            const canvas = document.createElement('canvas');
+            video.onseeked = () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+                resolve(canvas.toDataURL('image/jpeg'));
+                URL.revokeObjectURL(video.src);
+            };
+            video.currentTime = Math.min(1, video.duration / 2);
+        });
+    }
+
+    setDefaultDimensions(video) {
+        this.state.aspectRatio = video.videoWidth / video.videoHeight;
+        this.elements.widthInput.value = video.videoWidth;
+        this.elements.heightInput.value = video.videoHeight;
+    }
+
+    updateUIState() {
+        const hasFiles = this.state.files.length > 0;
+        this.elements.controlsSection.style.display = hasFiles ? 'block' : 'none';
+        this.elements.videoQueueSection.style.display = hasFiles ? 'block' : 'none';
+        this.elements.processBtn.disabled = !this.state.files.some(f => f.status === 'pending') || this.state.isProcessing;
+        this.elements.videoCount.textContent = this.state.files.length;
+    }
+
+    renderVideoGrid() {
+        this.elements.videoGrid.innerHTML = '';
+        this.state.files.forEach(fileObj => {
+            const card = document.createElement('div');
+            card.className = `video-card status-border-${fileObj.status}`;
+            card.dataset.id = fileObj.id;
+            
+            const originalSize = this.formatFileSize(fileObj.original.size);
+            let statusHTML;
+
+            if (fileObj.status === 'processing') {
+                statusHTML = `
+                    <div class="video-processing-state">
+                        <div class="progress-bar">
+                            <div class="progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <p class="progress-text">Initializing...</p>
+                    </div>
+                `;
+            } else if (fileObj.status === 'done' && fileObj.processed) {
+                const processedSize = this.formatFileSize(fileObj.processed.blob.size);
+                const savings = 100 - (fileObj.processed.blob.size / fileObj.original.size) * 100;
+                statusHTML = `
+                    <div class="video-card-player">
+                        <video src="${fileObj.processed.url}" controls muted loop></video>
+                    </div>
+                    <div class="video-results">
+                        <p><strong>New Size:</strong> ${processedSize}</p>
+                        <p class="size-savings"><strong>Savings: ${savings.toFixed(1)}%</strong></p>
+                    </div>
+                `;
+            } else {
+                statusHTML = `<span class="status-badge status-${fileObj.status}">${fileObj.status}</span>`;
+            }
+
+            card.innerHTML = `
+                <div class="video-thumbnail">
+                    <img src="${fileObj.original.thumbnailUrl}" alt="Thumbnail for ${fileObj.file.name}">
+                </div>
+                <div class="video-info">
+                    <p class="video-filename">${fileObj.file.name}</p>
+                    <p class="video-stats">${fileObj.original.width}×${fileObj.original.height}px (${originalSize})</p>
+                    ${statusHTML}
+                    <div class="video-actions">
+                        <button class="btn btn-secondary remove-btn">Remove</button>
+                        <button class="btn btn-success download-btn" style="display: ${fileObj.processed ? 'flex' : 'none'}">Download</button>
+                    </div>
+                </div>
+            `;
+            this.elements.videoGrid.appendChild(card);
+        });
+    }
+    
+    handleDimensionChange(dimension) {
+        if (!this.state.aspectRatio || !this.elements.maintainAspectRatio.checked) return;
+        const widthInput = this.elements.widthInput;
+        const heightInput = this.elements.heightInput;
+        if (dimension === 'width') {
+            const newWidth = parseInt(widthInput.value, 10) || 0;
+            heightInput.value = Math.round(newWidth / this.state.aspectRatio);
         } else {
-            btnText.style.display = 'inline';
-            btnLoader.style.display = 'none';
-            this.convertBtn.disabled = false;
+            const newHeight = parseInt(heightInput.value, 10) || 0;
+            widthInput.value = Math.round(newHeight * this.state.aspectRatio);
         }
     }
 
-    showError(message, solutions = []) {
-        const existingError = document.querySelector('.error-message');
-        if (existingError) {
-            existingError.remove();
-        }
+    async processAllVideos() {
+        if (this.state.isProcessing) return;
+        this.state.isProcessing = true;
+        this.updateUIState();
+        const filesToProcess = this.state.files.filter(f => f.status === 'pending');
 
-        const errorDiv = document.createElement('div');
-        errorDiv.className = 'error-message';
-        errorDiv.style.cssText = `
-            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
-            margin: 20px 0;
-            box-shadow: 0 10px 25px rgba(255, 107, 107, 0.3);
-            line-height: 1.6;
-        `;
-        
-        let content = `<strong>❌ ${message}</strong>`;
-        if (solutions.length > 0) {
-            content += '<br><br><strong>Possible solutions:</strong><br>';
-            content += solutions.map(solution => `• ${solution}`).join('<br>');
+        for (const [index, fileObj] of filesToProcess.entries()) {
+            fileObj.status = 'processing';
+            this.renderVideoGrid();
+            
+            // Define the callback function to handle progress updates
+            const progressCallback = (progress) => {
+                this.showLoading(true, `Processing ${index + 1}/${filesToProcess.length}: ${fileObj.file.name} (${progress}%)`);
+                const cardEl = this.elements.videoGrid.querySelector(`[data-id="${fileObj.id}"]`);
+                if (cardEl) {
+                    const fillEl = cardEl.querySelector('.progress-bar-fill');
+                    const textEl = cardEl.querySelector('.progress-text');
+                    if (fillEl) fillEl.style.width = `${progress}%`;
+                    if (textEl) textEl.textContent = `Processing... ${progress}%`;
+                }
+            };
+
+            try {
+                // Pass the callback to the conversion function
+                const processedBlob = await this.performHtml5Conversion(fileObj.file, progressCallback);
+                fileObj.processed = { blob: processedBlob, url: URL.createObjectURL(processedBlob) };
+                fileObj.status = 'done';
+            } catch (error) {
+                console.error('Conversion failed:', error);
+                fileObj.status = 'error';
+                this.showError(`Failed to convert ${fileObj.file.name}. ${error.message}`);
+            }
+            this.renderVideoGrid();
         }
-        
-        errorDiv.innerHTML = content;
-        this.conversionOptions.appendChild(errorDiv);
-        
-        this.setConvertButtonLoading(false);
+        this.state.isProcessing = false;
+        this.showLoading(false);
+        this.updateUIState();
     }
+
+    performHtml5Conversion(file, onProgress) { // Accepts the onProgress callback
+        return new Promise((resolve, reject) => {
+            const width = parseInt(this.elements.widthInput.value, 10);
+            const height = parseInt(this.elements.heightInput.value, 10);
+            const bitrate = parseInt(this.elements.bitrateSelect.value, 10);
+            const mimeType = this.elements.formatSelect.value;
+            const removeAudio = this.elements.removeAudio.checked;
+
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                return reject(new Error(`${mimeType} format is not supported by your browser.`));
+            }
+
+            const video = document.createElement('video');
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = width;
+            canvas.height = height;
+
+            video.src = URL.createObjectURL(file);
+            video.muted = true;
+
+            video.onloadedmetadata = () => {
+                const canvasStream = canvas.captureStream(30);
+                let finalStream = canvasStream;
+                
+                if (!removeAudio && (video.mozHasAudio || video.webkitHasAudio || video.audioTracks?.length > 0)) {
+                    const audioContext = new AudioContext();
+                    const sourceNode = audioContext.createMediaElementSource(video);
+                    const destNode = audioContext.createMediaStreamDestination();
+                    sourceNode.connect(destNode);
+                    if (destNode.stream.getAudioTracks().length > 0) {
+                        finalStream.addTrack(destNode.stream.getAudioTracks()[0]);
+                    }
+                }
+                
+                const recorder = new MediaRecorder(finalStream, { mimeType, videoBitsPerSecond: bitrate });
+                const chunks = [];
+                recorder.ondataavailable = e => chunks.push(e.data);
+                recorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: mimeType });
+                    URL.revokeObjectURL(video.src);
+                    resolve(blob);
+                };
+                recorder.onerror = e => reject(e.error);
+
+                let frameId;
+                let lastProgress = -1;
+                const drawFrame = () => {
+                    if (video.paused || video.ended) {
+                        cancelAnimationFrame(frameId);
+                        recorder.stop();
+                        return;
+                    }
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    // Calculate and report progress
+                    const progress = Math.min(100, Math.round((video.currentTime / video.duration) * 100));
+                    if (progress > lastProgress) {
+                        onProgress(progress);
+                        lastProgress = progress;
+                    }
+
+                    frameId = requestAnimationFrame(drawFrame);
+                };
+                
+                video.play().then(() => {
+                    recorder.start();
+                    drawFrame();
+                }).catch(reject);
+            };
+            video.onerror = (e) => reject(new Error('Could not load the video file. It might be corrupt or in an unsupported format.'));
+        });
+    }
+
+    downloadSingleVideo(fileId) {
+        const fileObj = this.state.files.find(f => f.id === fileId);
+        if (!fileObj || !fileObj.processed) return;
+        this.triggerDownload(fileObj.processed.url, this.generateFilename(fileObj.file));
+    }
+
+    triggerDownload(href, filename) {
+        const link = document.createElement('a');
+        link.href = href; link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    generateFilename(originalFile) {
+        const extension = this.elements.formatSelect.value.split('/')[1];
+        const originalName = originalFile.name.substring(0, originalFile.name.lastIndexOf('.'));
+        return `${originalName}-converted.${extension}`;
+    }
+
+    removeVideo(fileId) {
+        const fileObj = this.state.files.find(f => f.id === fileId);
+        if (fileObj?.processed?.url) URL.revokeObjectURL(fileObj.processed.url);
+        this.state.files = this.state.files.filter(f => f.id !== fileId);
+        this.renderVideoGrid();
+        this.updateUIState();
+    }
+
+    resetApplication() {
+        if (this.state.files.length > 0 && !confirm('Are you sure? This will clear all videos.')) return;
+        this.state.files.forEach(f => { if (f.processed?.url) URL.revokeObjectURL(f.processed.url); });
+        this.state = { ...this.state, files: [] };
+        this.elements.fileInput.value = '';
+        this.renderVideoGrid();
+        this.updateUIState();
+    }
+
+    showError(message) { this.elements.errorMessage.textContent = message; this.elements.errorMessage.style.display = 'block'; setTimeout(() => this.elements.errorMessage.style.display = 'none', 5000); }
+    showLoading(show, text = 'Processing...') { this.elements.loadingText.textContent = text; this.elements.loadingOverlay.classList.toggle('visible', show); }
+    formatFileSize(bytes) { if (bytes === 0) return '0 B'; const k = 1024; const sizes = ['B', 'KB', 'MB', 'GB']; const i = Math.floor(Math.log(bytes) / Math.log(k)); return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]; }
 }
 
-// Initialize the converter when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎬 Media Converter initializing...');
-    new MediaConverter();
-});
-
-// Add global error handlers
-window.addEventListener('error', (event) => {
-    console.error('Global error:', event.error);
-});
-
-window.addEventListener('unhandledrejection', (event) => {
-    console.error('Unhandled promise rejection:', event.reason);
+    window.html5VideoConverter = new HTML5VideoConverter();
 });
