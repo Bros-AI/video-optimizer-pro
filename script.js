@@ -1,11 +1,24 @@
+const funMessages = [
+    "Teaching pixels to be smaller...",
+    "Compressing the digital universe...",
+    "Reticulating splines, one frame at a time...",
+    "Don't worry, the hamster powering our server is getting a water break.",
+    "Polishing each frame to sparkling perfection...",
+    "Finding a smaller home for your video's data...",
+    "This is not magic, it's just very clever math.",
+    "Converting... Did you know a group of pugs is called a grumble?",
+    "Making your video web-friendly and lightning-fast!",
+    "Almost there... brewing a fresh pot of coffee for the next one."
+];
+
 class HTML5VideoConverter {
     constructor() {
         this.state = {
-            files: [], // { id, file, original, status, processed }
+            files: [],
             isProcessing: false,
             aspectRatio: 1,
+            funTextIntervalId: null,
         };
-
         this.elements = this.initializeElements();
         this.initializeEventListeners();
     }
@@ -23,12 +36,18 @@ class HTML5VideoConverter {
             maintainAspectRatio: document.getElementById('maintain-aspect-ratio'),
             processBtn: document.getElementById('process-btn'),
             resetBtn: document.getElementById('reset-btn'),
+            downloadZipBtn: document.getElementById('download-zip-btn'),
             videoQueueSection: document.getElementById('video-queue-section'),
             videoGrid: document.getElementById('video-grid'),
             videoCount: document.getElementById('video-count'),
             errorMessage: document.getElementById('error-message'),
             loadingOverlay: document.getElementById('loading-overlay'),
             loadingText: document.getElementById('loading-text'),
+            funFactText: document.getElementById('fun-fact-text'), // This is unused now, but harmless to keep
+            totalStatsSection: document.getElementById('total-stats-section'),
+            totalOriginalSize: document.getElementById('total-original-size'),
+            totalNewSize: document.getElementById('total-new-size'),
+            totalSavingsPercent: document.getElementById('total-savings-percent'),
         };
     }
 
@@ -39,6 +58,7 @@ class HTML5VideoConverter {
         this.elements.heightInput.addEventListener('input', () => this.handleDimensionChange('height'));
         this.elements.processBtn.addEventListener('click', () => this.processAllVideos());
         this.elements.resetBtn.addEventListener('click', () => this.resetApplication());
+        this.elements.downloadZipBtn.addEventListener('click', () => this.downloadAllAsZip());
         this.elements.videoGrid.addEventListener('click', (e) => {
             const target = e.target.closest('button');
             if (!target) return;
@@ -115,10 +135,13 @@ class HTML5VideoConverter {
 
     updateUIState() {
         const hasFiles = this.state.files.length > 0;
+        const hasConvertedFiles = this.state.files.some(f => f.status === 'done');
         this.elements.controlsSection.style.display = hasFiles ? 'block' : 'none';
         this.elements.videoQueueSection.style.display = hasFiles ? 'block' : 'none';
         this.elements.processBtn.disabled = !this.state.files.some(f => f.status === 'pending') || this.state.isProcessing;
         this.elements.videoCount.textContent = this.state.files.length;
+        this.elements.downloadZipBtn.style.display = hasConvertedFiles ? 'inline-flex' : 'none';
+        this.elements.totalStatsSection.style.display = hasConvertedFiles ? 'block' : 'none';
     }
 
     renderVideoGrid() {
@@ -127,10 +150,8 @@ class HTML5VideoConverter {
             const card = document.createElement('div');
             card.className = `video-card status-border-${fileObj.status}`;
             card.dataset.id = fileObj.id;
-            
             const originalSize = this.formatFileSize(fileObj.original.size);
             let statusHTML;
-
             if (fileObj.status === 'processing') {
                 statusHTML = `
                     <div class="video-processing-state">
@@ -138,8 +159,7 @@ class HTML5VideoConverter {
                             <div class="progress-bar-fill" style="width: 0%;"></div>
                         </div>
                         <p class="progress-text">Initializing...</p>
-                    </div>
-                `;
+                    </div>`;
             } else if (fileObj.status === 'done' && fileObj.processed) {
                 const processedSize = this.formatFileSize(fileObj.processed.blob.size);
                 const savings = 100 - (fileObj.processed.blob.size / fileObj.original.size) * 100;
@@ -150,12 +170,10 @@ class HTML5VideoConverter {
                     <div class="video-results">
                         <p><strong>New Size:</strong> ${processedSize}</p>
                         <p class="size-savings"><strong>Savings: ${savings.toFixed(1)}%</strong></p>
-                    </div>
-                `;
+                    </div>`;
             } else {
                 statusHTML = `<span class="status-badge status-${fileObj.status}">${fileObj.status}</span>`;
             }
-
             card.innerHTML = `
                 <div class="video-thumbnail">
                     <img src="${fileObj.original.thumbnailUrl}" alt="Thumbnail for ${fileObj.file.name}">
@@ -168,8 +186,7 @@ class HTML5VideoConverter {
                         <button class="btn btn-secondary remove-btn">Remove</button>
                         <button class="btn btn-success download-btn" style="display: ${fileObj.processed ? 'flex' : 'none'}">Download</button>
                     </div>
-                </div>
-            `;
+                </div>`;
             this.elements.videoGrid.appendChild(card);
         });
     }
@@ -192,12 +209,9 @@ class HTML5VideoConverter {
         this.state.isProcessing = true;
         this.updateUIState();
         const filesToProcess = this.state.files.filter(f => f.status === 'pending');
-
         for (const [index, fileObj] of filesToProcess.entries()) {
             fileObj.status = 'processing';
             this.renderVideoGrid();
-            
-            // Define the callback function to handle progress updates
             const progressCallback = (progress) => {
                 this.showLoading(true, `Processing ${index + 1}/${filesToProcess.length}: ${fileObj.file.name} (${progress}%)`);
                 const cardEl = this.elements.videoGrid.querySelector(`[data-id="${fileObj.id}"]`);
@@ -208,9 +222,7 @@ class HTML5VideoConverter {
                     if (textEl) textEl.textContent = `Processing... ${progress}%`;
                 }
             };
-
             try {
-                // Pass the callback to the conversion function
                 const processedBlob = await this.performHtml5Conversion(fileObj.file, progressCallback);
                 fileObj.processed = { blob: processedBlob, url: URL.createObjectURL(processedBlob) };
                 fileObj.status = 'done';
@@ -223,44 +235,34 @@ class HTML5VideoConverter {
         }
         this.state.isProcessing = false;
         this.showLoading(false);
+        this.updateTotalStats();
         this.updateUIState();
     }
 
-    performHtml5Conversion(file, onProgress) { // Accepts the onProgress callback
+    performHtml5Conversion(file, onProgress) {
         return new Promise((resolve, reject) => {
             const width = parseInt(this.elements.widthInput.value, 10);
             const height = parseInt(this.elements.heightInput.value, 10);
             const bitrate = parseInt(this.elements.bitrateSelect.value, 10);
             const mimeType = this.elements.formatSelect.value;
             const removeAudio = this.elements.removeAudio.checked;
-
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                return reject(new Error(`${mimeType} format is not supported by your browser.`));
-            }
-
+            if (!MediaRecorder.isTypeSupported(mimeType)) return reject(new Error(`${mimeType} format is not supported by your browser.`));
             const video = document.createElement('video');
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = width;
-            canvas.height = height;
-
+            canvas.width = width; canvas.height = height;
             video.src = URL.createObjectURL(file);
             video.muted = true;
-
             video.onloadedmetadata = () => {
                 const canvasStream = canvas.captureStream(30);
                 let finalStream = canvasStream;
-                
                 if (!removeAudio && (video.mozHasAudio || video.webkitHasAudio || video.audioTracks?.length > 0)) {
                     const audioContext = new AudioContext();
                     const sourceNode = audioContext.createMediaElementSource(video);
                     const destNode = audioContext.createMediaStreamDestination();
                     sourceNode.connect(destNode);
-                    if (destNode.stream.getAudioTracks().length > 0) {
-                        finalStream.addTrack(destNode.stream.getAudioTracks()[0]);
-                    }
+                    if (destNode.stream.getAudioTracks().length > 0) finalStream.addTrack(destNode.stream.getAudioTracks()[0]);
                 }
-                
                 const recorder = new MediaRecorder(finalStream, { mimeType, videoBitsPerSecond: bitrate });
                 const chunks = [];
                 recorder.ondataavailable = e => chunks.push(e.data);
@@ -270,9 +272,7 @@ class HTML5VideoConverter {
                     resolve(blob);
                 };
                 recorder.onerror = e => reject(e.error);
-
-                let frameId;
-                let lastProgress = -1;
+                let frameId, lastProgress = -1;
                 const drawFrame = () => {
                     if (video.paused || video.ended) {
                         cancelAnimationFrame(frameId);
@@ -280,24 +280,36 @@ class HTML5VideoConverter {
                         return;
                     }
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
-                    // Calculate and report progress
                     const progress = Math.min(100, Math.round((video.currentTime / video.duration) * 100));
                     if (progress > lastProgress) {
                         onProgress(progress);
                         lastProgress = progress;
                     }
-
                     frameId = requestAnimationFrame(drawFrame);
                 };
-                
-                video.play().then(() => {
-                    recorder.start();
-                    drawFrame();
-                }).catch(reject);
+                video.play().then(() => { recorder.start(); drawFrame(); }).catch(reject);
             };
             video.onerror = (e) => reject(new Error('Could not load the video file. It might be corrupt or in an unsupported format.'));
         });
+    }
+
+    async downloadAllAsZip() {
+        const convertedFiles = this.state.files.filter(f => f.status === 'done' && f.processed);
+        if (convertedFiles.length === 0) return;
+        this.showLoading(true, `Zipping ${convertedFiles.length} files...`);
+        try {
+            const zip = new JSZip();
+            convertedFiles.forEach(fileObj => {
+                zip.file(this.generateFilename(fileObj.file), fileObj.processed.blob);
+            });
+            const content = await zip.generateAsync({ type: 'blob' });
+            this.triggerDownload(URL.createObjectURL(content), `converted-videos-${Date.now()}.zip`);
+        } catch (error) {
+            console.error('Zipping failed:', error);
+            this.showError('There was an error creating the ZIP file.');
+        } finally {
+            this.showLoading(false);
+        }
     }
 
     downloadSingleVideo(fileId) {
@@ -325,6 +337,7 @@ class HTML5VideoConverter {
         if (fileObj?.processed?.url) URL.revokeObjectURL(fileObj.processed.url);
         this.state.files = this.state.files.filter(f => f.id !== fileId);
         this.renderVideoGrid();
+        this.updateTotalStats();
         this.updateUIState();
     }
 
@@ -334,7 +347,22 @@ class HTML5VideoConverter {
         this.state = { ...this.state, files: [] };
         this.elements.fileInput.value = '';
         this.renderVideoGrid();
+        this.updateTotalStats();
         this.updateUIState();
+    }
+    
+    updateTotalStats() {
+        const convertedFiles = this.state.files.filter(f => f.status === 'done' && f.processed);
+        let totalOriginalSize = 0;
+        let totalNewSize = 0;
+        convertedFiles.forEach(f => {
+            totalOriginalSize += f.original.size;
+            totalNewSize += f.processed.blob.size;
+        });
+        this.elements.totalOriginalSize.textContent = this.formatFileSize(totalOriginalSize);
+        this.elements.totalNewSize.textContent = this.formatFileSize(totalNewSize);
+        const savings = totalOriginalSize > 0 ? 100 - (totalNewSize / totalOriginalSize) * 100 : 0;
+        this.elements.totalSavingsPercent.textContent = `${savings.toFixed(1)}%`;
     }
 
     showError(message) { this.elements.errorMessage.textContent = message; this.elements.errorMessage.style.display = 'block'; setTimeout(() => this.elements.errorMessage.style.display = 'none', 5000); }
